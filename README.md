@@ -1,126 +1,181 @@
-# STAT6207 作业二 — 序列识别（Sequence Recognition）
+# STAT6207 Applied Deep Learning — Assignment 2
 
-基于过去 10 分钟时间步，对家庭用电量 `Appliances`（Wh）做**单步预测**。使用
-**LSTM**（Basic）与 **Transformer**（Advanced），全程由 OpenCode 辅助构建。
-项目包含 EDA、naive 基线、Transformer 对比，以及一个可泛化到**不同时间段**的预测管线。
+## Sequence Recognition: `Appliances` One-Step Forecasting
 
-> 进度与待办详见 **[`docs/PROGRESS.md`](docs/PROGRESS.md)**；
-> 续接作业请先看 **[`docs/HANDOFF.md`](docs/HANDOFF.md)**（含下一步 prompt 原文与网络备忘）。
+Build a time-series **one-step-ahead** forecasting model with OpenCode: using the history sampled
+every 10 minutes, predict the next value of household electricity consumption `Appliances` (Wh).
+It covers all assignment items: **Basic LSTM**, **Advanced A local LLM**,
+**Advanced B Transformer**, and **Advanced C generalizable pipeline**, together with the
+**prompts, report, session transcripts**, and **3 erroneous OpenCode code suggestions**.
 
-## 任务定义
+---
 
-- **目标变量**：`Appliances`（Wh），采样间隔 10 分钟。
-- **形式**：单步预测（one-step-ahead）。输入 = 过去 `L=24` 个时间步（4 小时），标签 = `t+1` 时刻的 `Appliances`。
-- **切分（按时间、不 shuffle）**：前 800 行为训练段，后 200 行为测试段；训练段末尾 160 行作为**验证集**用于早停：
-  - 子训练集：行 0–639（2016-01-11 17:00 → 2016-01-16 03:30）
-  - 验证集：行 640–799（2016-01-16 03:40 → 2016-01-17 06:10）
-  - 测试集：行 800–999（2016-01-17 06:20 → 2016-01-18 15:30）
-- **归一化**：`StandardScaler` 只在子训练集上 `fit`，再 `transform` 验证/测试集。
-- **指标**：均在原始（反归一化）Wh 尺度上计算。
-- **基线**：naive persistence（直接沿用当前值）。
+## Deliverables Overview (by assignment item)
 
-## 目录结构
+| Assignment item                        | Deliverable / Result                   | Location                                                  | How to find it                                            |
+| -------------------------------------- | -------------------------------------- | --------------------------------------------------------- | --------------------------------------------------------- |
+| **Basic (50%)** LSTM forecast    | LSTM code, metrics, prediction plots   | `src/train_lstm_v2.py`, `results/lstm_v2/`             | See [① Basic](#-basic-50--lstm) below                     |
+| **Advanced B (15%)** Transformer | Transformer code, metrics, plots       | `src/transformer_forecast.py`, `results/transformer/` | See [② Advanced B](#-advanced-b-15--transformer)          |
+| **Advanced C (20%)** Generalizable pipeline | Generic pipeline + cross-period transfer results | `src/run_forecast.py`, `results/forecast/` | See [③ Advanced C](#-advanced-c-20--generalizable-pipelinedifferent-periods) |
+| **Advanced A (15%)** Local LLM   | Local-model-generated script + comparison | `local_llm/`                                         | See [④ Advanced A](#-advanced-a-15--local-llmcomparison)  |
+| **Prompt**                       | Original prompt text for each stage    | `prompts/prompts_used.md`                               | See [⑤ Submitted prompts](#-submitted-prompts)            |
+| **Report (PDF)**                 | Report body                            | `report/report.md` (→ `report/report.pdf`)           | See [⑥ Report](#-reportpdf)                               |
+| **Session transcripts**          | All OpenCode session records + index   | `transcripts/`                                          | See [⑦ Session transcripts](#-session-transcriptstranscripts) |
+| **3 code suggestions**           | 3 erroneous suggestions + lecture basis + fixes | `report/report.md` Section 8, `report/bug_log.md` | See [⑧ Three code suggestions](#-three-code-suggestionsrequired) |
+
+> All result metrics are computed on the **original (de-normalized) Wh scale**, and are always
+> compared against the **naive persistence** baseline.
+
+---
+
+## ① Basic (50%) — LSTM
+
+Split by time (no shuffling), fit the scaler only on the training segment, no look-ahead, sliding
+window L=24, validation-set early stopping.
+
+| Model                              |      RMSE (Wh) | vs. naive    |
+| ---------------------------------- | -------------: | ------------ |
+| naive persistence (baseline)       |           86.6 | —           |
+| LSTM v1 (no validation/no early stop, counterexample) |          282.4 | 3.3× worse |
+| **LSTM v2 (univariate + early stop)** | **78.8** | **better** |
+
+- Code: `src/train_lstm_v2.py` (main result, univariate); `src/train_lstm.py` (deliberately kept overfitting counterexample).
+- Data pipeline: `src/data_pipeline.py` → `artifacts/`.
+- Results: `results/lstm_v2/{metrics_v2.json, lstm_pred_v2.png, lstm_loss_v2.png}`,
+  counterexample in `results/lstm_v1_broken/`.
+- **How to read**: open the prediction plot to compare truth/prediction/naive; `metrics_v2.json` holds the original-scale metrics.
+
+## ② Advanced B (15%) — Transformer
+
+**Identical** split, scaler, and early-stopping protocol as the LSTM, for a fair comparison under the
+same univariate input.
+
+| Model                           | #Params |      RMSE (Wh) |
+| ------------------------------- | ------: | -------------: |
+| **Transformer (univariate)** | 100161 | **78.5** |
+| LSTM (univariate)               |  50497 |           78.8 |
+| naive persistence               |     — |           86.6 |
+
+- Code: `src/transformer_forecast.py`; results: `results/transformer/`.
+- **How to read**: `metrics_transformer.json` contains the three-way Transformer/LSTM/naive comparison;
+  `transformer_pred.png` and `transformer_loss.png` are the prediction and training curves.
+
+## ③ Advanced C (20%) — Generalizable pipeline (different periods)
+
+`src/run_forecast.py` runs on **any period / similar CSV** without code changes:
+
+```
+--csv --target --window --test-ratio --model {lstm,transformer} --start --end --tag
+--features {all,univariate}
+```
+
+Transferred to a different period `data/A2_periodB.csv` (2016-01-18 → 01-29, **no overlap** with the release week):
+
+| Model       | Features   |           RMSE | naive RMSE |
+| ----------- | ---------- | -------------: | ---------: |
+| LSTM        | all        |           22.6 |       11.0 |
+| LSTM        | univariate | **12.5** |       11.0 |
+| Transformer | all        |           21.0 |       11.0 |
+| Transformer | univariate | **13.2** |       11.0 |
+
+- Results: `results/forecast/metrics_periodB_*.json`, `pred_periodB_*.png`.
+- **How to read**: univariate nearly halves the error versus all features, yet is still slightly above
+  naive — illustrating the **distribution shift** limitation.
+
+## ④ Advanced A (15%) — Local LLM (comparison)
+
+- Goal: use a **locally deployed LLM** to generate an LSTM script equivalent to Basic, and compare the results and code quality.
+- Status: **Ollama** is installed and running on this machine (`ollama serve`, API v0.40.3).
+- Artifact location: `local_llm/` (`llm_raw_output.txt`, `llm_generated.py`, `metrics.json`, plots).
+- Report location: `report/report.md` **Section 5 (Advanced A)**
+- **How to do/read it**: the prompt is in `prompts/prompts_used.md` under "Advanced A"; once the run finishes,
+  compare `local_llm/metrics.json` against this project's LSTM v2 (78.8) and naive (86.6).
+
+## ⑤ Submitted prompts
+
+- `prompts/prompts_used.md`: **original prompt text for each stage** (EDA → data processing → LSTM v1/v2 →
+  Transformer → generalizable pipeline → feature selection → local LLM), each annotated with its corresponding
+  artifact and bug number.
+- They can also be verified verbatim from `transcripts/`.
+
+## ⑥ Report (PDF)
+
+- Body: `report/report.pdf`
+- Appendices: `report/EDA_report.pdf` (exploratory analysis), `report/bug_log.pdf` (error details).
+- Contents: task/data, method and prompt design, LSTM, Transformer, generalizable pipeline, local LLM (placeholder),
+  **3 code suggestions**, conclusions and limitations, reproduction commands.
+- **How to read**: read in order; Section 8 directly maps to the assignment's "3 erroneous suggestions".
+
+## ⑦ Session transcripts (transcripts)
+
+- `transcripts/`: all session records (Markdown), with `transcripts/README.md` as the index table
+  (file → stage → model → related bug number).
+- **How to read**: find the stage you want in `README.md` and open the corresponding `session_*.md`; the records
+  fully preserve the "going astray → correction" process.
+
+## ⑧ Three code suggestions (required)
+
+The 3 erroneous/suboptimal OpenCode code suggestions listed in the report (original approach → problem → lecture basis → fix → metric change):
+
+| #      | Problem                                                     | After fix                             |
+| ------ | ----------------------------------------------------------- | ------------------------------------- |
+| `#5` | No validation set / no early stopping, run fixed epochs and take the last-epoch weights → overfitting | RMSE 282.4 → **78.8**       |
+| `#7` | Training loop used the **test set** for per-epoch monitoring (test-set leakage) | Test set fully isolated; evaluation trustworthy |
+| `#6` | Generalizable pipeline fed all features without selection (including `rv1/rv2`) | RMSE 157.5 → **78.8** (univariate) |
+
+See `report/report.md` Section 8 and `report/bug_log.md` (plus 4 additional EDA/process items).
+
+---
+
+## Directory structure
 
 ```
 assignment_2/
-├── README.md
-├── AGENTS.md                     # OpenCode 项目指令
-├── data/
-│   ├── A2_data_release.csv       # 发布的原始数据集（1000 行）
-│   ├── A2_periodB.csv            # 不同时间段（与发布周无重叠，01-18 → 01-29）
-│   └── uci_appliances_jan2016.csv# UCI 源文件抽取（01-11 → 01-29，部分下载）
-├── docs/
-│   ├── 2026_6207_Lecture_L4_v3.pdf
-│   ├── EDA_report.md             # 探索性分析报告
-│   ├── bug_log.md                # OpenCode 错误与修复（报告素材）
-│   └── PROGRESS.md               # 作业进度记录
-├── src/
-│   ├── data_pipeline.py          # 切分 + 归一化 + 滑窗（写入 artifacts/）
-│   ├── train_lstm.py             # LSTM v1（刻意保留的过拟合反例）
-│   ├── train_lstm_v2.py          # LSTM v2（验证集 + 早停）← 主结果
-│   ├── transformer_forecast.py   # Transformer 编码器，同协议
-│   └── run_forecast.py           # 可泛化管线（任意时间段）
-├── artifacts/
-│   ├── data_windows.npz          # 生成的 X/y 窗口
-│   └── scaler.pkl                # 生成的 scaler
-└── results/
+├── README.md                     # this file (index of assignment results)
+├── requirements.txt
+├── report/
+│   ├── report.md                 # report body (→ report.pdf)
+│   ├── EDA_report.md             # appendix: exploratory analysis
+│   └── bug_log.md                # appendix: erroneous-suggestion details
+├── prompts/
+│   └── prompts_used.md           # original submitted prompts
+├── transcripts/                  # session records + README index
+├── src/                          # all code
+│   ├── data_pipeline.py
+│   ├── train_lstm.py             # LSTM v1 (counterexample)
+│   ├── train_lstm_v2.py          # LSTM v2 (main result)
+│   ├── transformer_forecast.py
+│   └── run_forecast.py
+├── data/                         # data
+│   ├── A2_data_release.csv       # release-week data (Basic/B/C)
+│   └── A2_periodB.csv            # different period (Advanced C, another period from the UCI dataset)
+├── artifacts/                    # intermediate artifacts (regenerable via data_pipeline.py)
+│   ├── data_windows.npz
+│   └── scaler.pkl
+└── results/                      # results (plots + metrics)
     ├── eda/eda_appliances.png
-    ├── lstm_v1_broken/           # 修复前（metrics.json、png、模型）
-    ├── lstm_v2/                  # 修复后的 LSTM（metrics_v2.json、png）
-    ├── transformer/              # Transformer（metrics_transformer.json、png）
-    └── forecast/                 # 泛化管线输出（多时间段）
+    ├── lstm_v1_broken/           # LSTM v1 (counterexample)
+    ├── lstm_v2/                  # LSTM v2 (main result)
+    ├── transformer/
+    └── forecast/                 # generalizable pipeline (incl. feature-selection ablation)
 ```
 
-所有脚本都基于项目根目录解析路径，可从任意位置运行。
-
-## 运行方式
+## How to run / reproduce
 
 ```bash
-python src/data_pipeline.py          # -> artifacts/data_windows.npz, scaler.pkl
-python src/train_lstm.py             # -> results/lstm_v1_broken/   （过拟合反例）
-python src/train_lstm_v2.py          # -> results/lstm_v2/         （修复后的 LSTM）
-python src/transformer_forecast.py   # -> results/transformer/     （需先跑 lstm_v2）
-python src/run_forecast.py --csv data/A2_periodB.csv --model lstm --tag periodB_lstm
+pip install -r requirements.txt
+
+python src/data_pipeline.py
+python src/train_lstm_v2.py          # LSTM main result
+python src/train_lstm.py             # LSTM counterexample (v1)
+python src/transformer_forecast.py   # Transformer (run train_lstm_v2.py first)
+python src/run_forecast.py --csv data/A2_data_release.csv --model lstm --features univariate --tag release_lstm_uni
+python src/run_forecast.py --csv data/A2_periodB.csv      --model transformer --features univariate --tag periodB_trans_uni
 ```
 
-## 结果（测试集，原始 Wh 尺度）
+All scripts resolve paths relative to the repository root and can be run from any location. Fixed random seed 42.
 
-| 模型 | MSE | MAE | RMSE |
-|---|---:|---:|---:|
-| Naive persistence（基线） | 7500.0 | 33.3 | **86.6** |
-| LSTM v1（无验证/无早停） | 79745.3 | 225.4 | **282.4** ❌ |
-| LSTM v2（单变量 + 早停） | 6208.4 | 36.0 | **78.8** |
-| Transformer（单变量） | 6165.5 | 40.6 | **78.5** |
-| LSTM（全部 28 特征） | 24821.6 | 113.9 | 157.5 |
-| Transformer（全部 28 特征） | 11869.8 | 79.7 | 108.9 |
+## Time-series correctness rules (followed throughout)
 
-主要发现：
-
-1. 没有验证集/早停时，LSTM **严重过拟合**，最终**比 naive 基线还差**（RMSE 282 vs 87）。加入按时间的验证集与早停后修复。
-2. 单变量输入下，LSTM 与 Transformer 都**击败 naive**，且两者几乎打平（78.5 vs 78.8）。
-3. 喂入全部 28 个特征（含无信息的 `rv1`/`rv2`）反而拖累两个模型；**目标自身的历史是最有效的信号**。
-
-相关 OpenCode 错误与修复见 [`docs/bug_log.md`](docs/bug_log.md)。
-
-## 可泛化管线（`src/run_forecast.py`）
-
-参数化命令行工具，**无需改代码即可对任意时间段运行**：
-`--csv --target --window --test-ratio --model {lstm,transformer} --start --end --tag`。
-自动解析日期、推断采样间隔、修复缺失值（前向填充 + 线性插值）、按时间切分、
-只在训练部分拟合 scaler，并用验证集早停。
-
-```bash
-python src/run_forecast.py --csv data/A2_periodB.csv --model lstm        --tag periodB_lstm
-python src/run_forecast.py --csv data/A2_periodB.csv --model transformer --tag periodB_trans
-```
-
-| 时间段 | 模型 | RMSE | Naive RMSE |
-|---|---|---:|---:|
-| 发布周 | LSTM（全特征） | 157.6 | 86.6 |
-| 发布周 | Transformer（全特征） | 109.0 | 86.6 |
-| periodB（01-27→29） | LSTM（全特征） | 17.5 | 11.0 |
-| periodB（01-27→29） | Transformer（全特征） | 16.2 | 11.0 |
-
-管线可成功迁移到不同时间段，但**全特征**模型仍不敌 naive 基线——与上述"特征选择更重要"的结论一致。详见 `docs/bug_log.md` #6。
-
-## 时间序列正确性规则（本项目强制遵守）
-
-1. 按时间切分，绝不 shuffle。
-2. scaler 只在训练集上拟合。
-3. 无 look-ahead：在 `t` 结束的窗口只预测 `t+1`。
-4. 窗口不跨越训练/测试边界。
-5. 指标在原始尺度上计算。
-6. 始终与 naive persistence 基线对比。
-7. 固定随机种子（42）。
-
-## 进度
-
-- [x] EDA + 报告
-- [x] 数据处理管线（时间切分 + 归一化 + 滑窗）
-- [x] LSTM（修复版）+ naive 基线
-- [x] Transformer 对比
-- [x] 可泛化管线（不同时间段）
-- [ ] local LLM 对比（受阻：本网络无法下载 Ollama）
-- [ ] 报告 PDF、session transcripts、prompt 归档
-
-完整进度见 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
+1. Split by time, never shuffle; 2. Fit the scaler only on the training segment; 3. No look-ahead (a window ending at t predicts only t+1);
+2. Windows never cross split boundaries; 5. Metrics reported on the original scale; 6. Always compare against naive persistence; 7. Fixed seed 42.

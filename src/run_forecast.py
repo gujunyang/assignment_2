@@ -47,6 +47,9 @@ DROPOUT = 0.1
 D_MODEL = 64
 NHEAD = 4
 
+# Columns known to carry no information (identical random columns).
+DROP_COLS = ["rv1", "rv2"]
+
 
 # ============================================================================
 # Data handling
@@ -220,6 +223,9 @@ def parse_args():
     p.add_argument("--window", type=int, default=24, help="look-back steps")
     p.add_argument("--test-ratio", type=float, default=0.2, help="test fraction")
     p.add_argument("--model", choices=["lstm", "transformer"], default="lstm")
+    p.add_argument("--features", choices=["all", "univariate"], default="all",
+                   help="'all': all numeric cols except date/rv1/rv2; "
+                        "'univariate': only the target's own history")
     p.add_argument("--start", default=None, help="filter start date (inclusive)")
     p.add_argument("--end", default=None, help="filter end date (inclusive)")
     p.add_argument("--tag", default=None, help="output file tag")
@@ -243,10 +249,17 @@ def main():
     if args.target not in df.columns:
         raise ValueError(f"target '{args.target}' not in columns: {list(df.columns)}")
 
-    feature_cols = [c for c in df.select_dtypes(include=[np.number]).columns
+    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns
                     if c != "date"]
+    if args.features == "univariate":
+        feature_cols = [args.target]
+    else:
+        feature_cols = [c for c in numeric_cols if c not in DROP_COLS]
+        if args.target not in feature_cols:
+            feature_cols.append(args.target)
     target_idx = feature_cols.index(args.target)
-    print(f"[data] {csv_path.name} shape={df.shape}  features={len(feature_cols)}  target='{args.target}'")
+    print(f"[data] {csv_path.name} shape={df.shape}  target='{args.target}'")
+    print(f"[features] mode={args.features}  n={len(feature_cols)}  cols={feature_cols}")
 
     # ---- time-ordered splits ---------------------------------------------
     test_start = int(n * (1.0 - args.test_ratio))
