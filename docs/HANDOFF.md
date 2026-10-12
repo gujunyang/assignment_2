@@ -148,7 +148,20 @@ python src/run_forecast.py --csv data/A2_periodB.csv     --model transformer --f
 
 ---
 
-## 7. 提交清单（作业要求：prompt + 报告 PDF + transcripts）
+## 7. 远端上传状态（暂停中）
+
+- 远端：`https://github.com/gujunyang/assignment_2`（分支 `main`）。
+- 本地：已 commit `df775c8`（"Assignment 2: EDA, data pipeline, ..."），工作区干净。
+- 远端：**仍停在初始提交 `7e36001`，尚未推送成功**。
+- 失败原因：`git push` 走 `github.com:443`，本机连接 75s 超时被墙；`curl https://github.com` 偶尔能连（约 21s，很慢）。
+- 已尝试的绕行：用 keychain 里的 token 调 `api.github.com` 的 Git Data API 上传（脚本在 `/tmp/opencode/push_gh.py`），传到 7/43 时暂停——**未生成远端提交**（只留下若干无引用的 blob，无害）。
+- 续接时的三种方案：
+  - **A**：开 VPN/代理使 `github.com:443` 可达，然后 `git push -u origin main`（用户倾向此方案）。
+  - **B**：续跑 `/tmp/opencode/push_gh.py`（需先 `export GH_TOKEN=$(printf "protocol=https\nhost=github.com\n\n" | git credential fill | sed -n 's/^password=//p')`），通过 API 生成等价提交。
+  - **C**：用 token 给账号加 SSH key，再用 `ssh.github.com:443`（该地址可达）走正常 push。
+- 注意：方案 B 生成的 commit SHA 与本地不同，之后本地需 `git reset` 对齐。
+
+## 8. 提交清单（作业要求：prompt + 报告 PDF + transcripts）
 
 - [ ] prompt 归档
 - [ ] 报告 PDF
